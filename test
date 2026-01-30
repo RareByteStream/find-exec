@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+
+# LEGAL NOTICE  
+# 
+# Copyright (c) 2026 Alex Willer (Legal: Enes Güleç)
+# (GH: RareByteStream) <enesg.devel@gmail.com> All rights reserved.
+# 
+# This work is licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at:
+#    http://www.apache.org/licenses/LICENSE-2.0
+#    https://www.apache.org/licenses/LICENSE-2.0.txt
+# 
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+if [[ "$0" != "${BASH_SOURCE[0]}" ]]; then
+  printf "%s" "Cannot run the test as a sourced script."$'\n\r'
+  return 0
+fi
+
+og_pwd="$PWD"
+
+dir="$og_pwd/_temp_"
+dir_indirect="$dir/link/../link2/../../_temp_"
+
+mkdir -p $dir
+mkdir -p $dir/link
+mkdir -p $dir/link2
+mkdir -p $dir/link3
+mkdir -p $dir/link4
+mkdir -p $dir/link5
+
+printf "exit 0" > $dir/dotslash
+chmod +x $dir/dotslash
+cd "$dir"
+ln -nfs "./../dotslash" "$dir/link/test"
+ln -nfs "$dir/dotslash" "$dir/link2/test"  
+ln -nfs "../" "$dir/link3/test"  
+ln -nfs "./../../_temp_" "$dir/link4/test"  
+ln -nfs "$dir_indirect/dotslash" "$dir/link5/test"  
+cd "$og_pwd"
+
+printf "exit 0" > "$dir/dotslash"
+chmod +x "$dir/dotslash"
+
+
+source ./find-exec.sh
+
+printf "\n\r"
+find-exec --deps 2>&1
+printf "\n\r"
+
+declare -g current=0
+declare -g max=9
+
+function test-one () {
+  current=$(( current + 1 ))
+  local code=$1
+  local _found_exec_=""
+  printf "[$current/$max] $2 --> " 
+  shift 2
+  find-exec "$@" 2>&1
+  local gcode=$?
+  if [[ $code -lt 0 ]]; then
+    return $gcode
+  else
+    (( $gcode == $code )) && printf "[$current/$max]: Succeded." || printf "[$current/$max]: Failed."
+    printf "\n\r\n\r"
+    return 100
+  fi
+}
+
+test-one 0 "Test for default in \"./../dotslash\"" "test" --paths="$dir/link" -i --no-stdout
+
+test-one 0 "Test for already physical in \"$dir/dotslash\"" "test" --paths="$dir/link2" -i
+
+test-one 2 "Test for \"../\"" "test" --paths="$dir/link3" -i
+
+test-one 2 "Test for \"./../../_temp_\"" "test" --paths="$dir/link4" -i
+
+declare -g got_path=""
+test-one -1 "Test for --canonical in \"$dir_indirect/dotslash\"" "test" --paths="$dir/link5" -iC --declare-name="got_path" 
+(( $? == 0 )) && [[ -f "$got_path" && "$dir/dotslash" = "$got_path" ]] && printf "[$current/$max]: Succeded." || printf "[$current/$max]: Failed."
+printf "\n\r\n\r"
+
+got_path=""
+test-one -1 "Test for --physical in \"$dir_indirect/dotslash\"" "test" --paths="$dir/link5" --declare-name="got_path" -iP
+(( $? == 0 )) && [[ ! -L "$got_path" && -f "$got_path" && "$dir/dotslash" = "$got_path" ]] && printf "[$current/$max]: Succeded." || printf "[$current/$max]: Failed."
+printf "\n\r\n\r"
+
+
+test-one 0 "Test for system wide search" "bash" -iC
+
+
+current=$(( current + 1 ))
+printf "before --> _found_exec_: '$_found_exec_'\n\r"
+printf "[$current/$max] Test for merged flag parsing (-idOP) --> "
+find-exec "bash" -idOP 2>&1
+[[ $? -eq 0 ]] && declare -p _found_exec_ &>/dev/null && printf "[$current/$max]: Succeded." || printf "[$current/$max]: Failed."
+printf "\n\r"
+printf "after --> _found_exec_: '$_found_exec_' (has to be the same path)"
+printf "\n\r\n\r"
+
+
+function scope-test () {
+  current=$(( current + 1 ))
+  printf "[$current/$max] Test for declaration scope --> "
+  local _found_exec2_=""
+  find-exec "bash" --declare-name="_found_exec2_" -iP 2>&1
+  [[ -f $_found_exec2_ ]] && return 0
+  return 1
+}
+
+printf "before --> _found_exec2_: '$_found_exec2_'\n\r"
+scope-test
+[[ $? -eq 0 ]] && ! declare -p _found_exec2_ &>/dev/null && printf "[$current/$max]: Succeded." || printf "[$current/$max]: Failed."
+printf "\n\r"
+printf "after --> _found_exec2_: '$_found_exec2_' (has to be empty)"
+printf "\n\r\n\r"
+
